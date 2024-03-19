@@ -1,0 +1,358 @@
+% Clear all variables from the workspace
+clear all
+% Close all open figure windows
+close all
+% Clear the command window
+clc
+
+% Set a seed for reproducibility (optional)
+seed = 42;
+rng(seed);
+
+% Set ntwork filename
+network_filename = 'network_data_200_24-03-10_21-08-47.xlsx';
+% Start node in the network
+startnode = 8;
+% Destination node in the network
+destination = 2;
+
+% Number of particles in the swarm
+nbr_parti = 50;
+% Maximum number of iterations for the PSO algorithm
+maxiter = 100;
+
+% Choose fitness type between [dist, power, delay, all]
+fitness_type = "dis";
+% Flag to control whether to print information for all iterations
+print_all = true;
+
+% Execute the PSO algorithm
+pso(network_filename, startnode, destination, nbr_parti, maxiter, fitness_type, print_all);
+
+
+% PSO Main Function
+function [execution_time, dist, power, delay, fitness] = pso(network_filename, startnode, destination, nbr_parti, maxiter, fitness_type, print_all)
+    % Load data from Excel file
+    [dimTable,~,nodesdata] = xlsread(network_filename);
+
+    % Extract information about neighbors, coordinates, delays,powers, and capcity
+    % Get the number of nodes from the data
+    nodes = size(dimTable,1);
+    % Get neighbor nodes
+    neighbors = nodesdata(:,2);
+    % Get node coordinates
+    coordinates = nodesdata(:,3);
+    % Get delays associated with nodes
+    delays = cell2mat(nodesdata(:,4));
+    % Get power values associated with nodes
+    powers = cell2mat(nodesdata(:,5));
+    % Get capcity values associated with nodes
+    Capacity = cell2mat(nodesdata(:,6));
+
+    % Define a table (T) to save data
+    varNames = {'MaxIter', 'Source', 'Destination', 'NumParticles', 'BestPath', 'ExecutionTime', 'Distance', 'Power', 'Delay', 'Fitness','Capacity'};
+    T = cell(0, numel(varNames));
+
+    % Initialize iteration counter
+    n = 1;
+
+    % Initialize cell array to store the best path
+    thebestpath = cell(1, nbr_parti);
+
+    % Initialize variables for global worst solution
+    gworst = [];
+    fgworst = inf;
+
+    % Initialize variables for global best solution
+    gbest = [];
+    fgbest = inf;
+
+    % Set maximum and minimum velocity bounds for particles
+    Vmax = 1;
+    Vmin = -Vmax;
+
+    % Record the starting time using the `tic` function
+    start_time = tic;
+
+    % Initialize particles using a cell array for particle representations
+    particles = cell(1, nbr_parti);
+
+    % Loop through each particle in the swarm
+    for i = 1:nbr_parti
+        % Initialize particle position with the starting node
+        particle.pos = [startnode];
+
+        % Initialize particle velocity
+        particle.vel = rand(1, nodes) * (Vmax - Vmin) + Vmin;
+
+        % Initialize the value of the objective function for the particle
+        particle.valeurF = [];
+
+        % Initialize the particle's personal best position
+        particle.pbest = [];
+
+        % Initialize the value of the objective function for the personal best
+        particle.fpbest = [];
+
+        % Iterate through nodes to build the particle's path
+        for j = 2:nodes
+            % Handle the case where the index is out of bounds
+            if particle.pos(j - 1) < 1 || particle.pos(j - 1) > numel(neighbors)
+                % Set a default neighbor index
+                newnode = 1;
+            else
+                % Extract neighbors of the current node
+                listNgbs = neighbors{particle.pos(j - 1)};
+
+                % Check if the neighbors are represented as numeric values
+                if isnumeric(listNgbs)
+                    newnode = listNgbs;
+                else
+                    % Split and convert the neighbors represented as strings
+                    newlist = str2double(strsplit(listNgbs, '*'));
+
+                    % Select a random neighbor from the list
+                    newnode = newlist(randi(length(newlist)));
+                end
+            end
+
+            % Update the particle's position with the new node
+            particle.pos = [particle.pos, newnode];
+
+            % Exit the loop if the destination is reached
+            if newnode == destination
+                particle.pos = [particle.pos, zeros(1, nodes - j)];
+                break;
+            end
+        end
+
+        % Evaluate fitness for the current particle's position
+        [dist, power, delay, particle.valeurF] = evaluate(particle.pos, nodes, powers, coordinates, delays, fitness_type);
+
+        % Set the current particle's position as its personal best
+        particle.pbest = particle.pos;
+
+        % Set the fitness value associated with the personal best position
+        particle.fpbest = particle.valeurF;
+
+        % Check if the particle's personal best is better than the current global best
+        % and if the path satisfies the start and destination conditions
+        if particle.fpbest < fgbest && particle.pbest(1) == startnode && sum(particle.pbest == destination) == 1
+            % Update the global best position and its fitness value
+            gbest = particle.pbest;
+            fgbest = particle.fpbest;
+        % Check if the particle's personal best is worse than the current global worst
+        % and if the path satisfies the start and destination conditions
+        elseif particle.fpbest > fgworst && particle.pbest(1) == startnode && sum(particle.pbest == destination) == 1
+            % Update the global worst position and its fitness value
+            gworst = particle.pbest;
+            fgworst = particle.fpbest;
+        end
+
+        % Update the particle in the swarm with its current state
+        particles{i} = particle;
+
+        % Store the current path of the particle in the cell array
+        thebestpath{i} = particle.pos;
+    end
+
+
+    % PSO Algorithm
+    % Set constants for the PSO algorithm
+    c1 = 2.05;
+    c2 = 2.05;
+    w = 0.72;
+
+    % Iterate through the PSO algorithm until the maximum number of iterations is reached
+    while n <= maxiter
+        % Iterate through particles in the swarm
+        for i = 1:nbr_parti
+            % Extract the current particle
+                particle = particles{i};
+                particle.pos=zeros(1, nodes);
+                particle.vel=zeros(1, nodes);
+                particle.pos(1) = startnode;
+                
+            % Iterate through nodes in the particle's path
+            for j = 2:nodes
+                % Handle the case where the index is out of bounds
+                if particle.pbest(j) < 1 || particle.pbest(j) > numel(neighbors) || gbest(j) < 1 || gbest(j) > numel(neighbors)
+                    % Set velocity to zero
+                    particle.vel(j) = 0; 
+                else
+                    % Update particle velocity using PSO update rule
+                    particle.vel(j) = w * particle.vel(j) + c1 * rand() * (particle.pbest(j) - particle.pos(j)) + c2 * rand() * (gbest(j) - particle.pos(j));
+
+                    % Apply velocity bounds
+                    if particle.vel(j) > Vmax
+                        particle.vel(j) = Vmax;
+                    elseif particle.vel(j) < Vmin
+                        particle.vel(j) = Vmin;
+                    end
+
+                    % Update particle position based on the velocity
+                    s = 1 / (1 + exp(-particle.vel(j) / 3));
+
+                    % Handle the case where the index is out of bounds
+                    if particle.pos(j - 1) < 1 || particle.pos(j - 1) > numel(neighbors)
+                        % Set a default neighbor index
+                        newnode = 1; 
+                    else
+                        % Extract the list of neighbors for the current node
+                        listNgbs = neighbors{particle.pos(j - 1)};
+
+                        % Check if neighbors are represented as numeric values
+                        if isnumeric(listNgbs)
+                            newnode = listNgbs;
+                        else
+                            % Split and convert neighbors represented as strings
+                            newlist = str2double(strsplit(listNgbs, '*'));
+
+                            % Update particle position based on the sigmoid function
+                            if rand() < s
+                                newnode = newlist(randi(length(newlist)));
+                            elseif ismember(destination, newlist)
+                                newnode = newlist(find(newlist == destination, 1));
+                            else
+                                newnode = 1;
+                            end
+                        end
+                    end
+
+                    % Update the particle's position
+                    particle.pos(j) = newnode;
+
+                    % Check if the destination node is reached
+                    if newnode == destination
+                        particle.pos = [particle.pos, zeros(1, nodes - j)];
+                        z=[particle.pos, zeros(1, nodes - j)];
+                        %disp(z(z>0));
+                        break;
+                    end
+                end
+            end
+
+            % Evaluate fitness for the updated particle position
+            [dist, power, delay, particle.valeurF] = evaluate(particle.pos, nodes, powers, coordinates, delays, fitness_type);
+
+            % Update personal best if the fitness improves
+            if (particle.valeurF < particle.fpbest) && (particle.pos(1) == startnode) && (sum(particle.pos == destination) == 1)
+                particle.pbest = particle.pos;
+                particle.fpbest = particle.valeurF;
+                %disp(particle.pos(particle.pos>0))
+            end
+
+            % Update global best and worst based on fitness and path conditions
+            if (particle.fpbest < fgbest) && (particle.pbest(1) == startnode) && (sum(particle.pbest == destination) == 1)
+                gbest = round(particle.pbest);
+                fgbest = particle.fpbest;
+            elseif (particle.fpbest > fgworst) && (particle.pbest(1) == startnode) && (sum(particle.pbest == destination) == 1)
+                gworst = round(particle.pbest);
+                fgworst = particle.fpbest;
+            end
+
+            % Update the particle and its path in the swarm
+            particles{i} = particle;
+            thebestpath{i} = particle.pos;
+        end
+
+        % Display iteration counter
+        fprintf('Iteration %d\n', n);
+
+        if print_all
+            fprintf('Best Solution: %s\n', num2str(gbest(gbest>0)));
+            fprintf('Fitness: %.2f\n\n', fgbest);
+        end
+
+        % Increment iteration counter
+        n = n + 1;
+    end
+
+    % Record the total execution time
+    execution_time = toc(start_time);
+
+    % Display execution time
+    fprintf('Execution Time: %.2f\n', execution_time);
+
+
+    % Select the best path among all particles
+    best_fitness = Inf;
+    best_path = [];
+
+    for i = 1:nbr_parti
+        if particles{i}.fpbest < best_fitness && particles{i}.pbest(1) == startnode && sum(particles{i}.pbest == destination) == 1
+            best_fitness = particles{i}.fpbest;
+            best_path = particles{i}.pbest;
+        end
+    end
+
+    % Store the best path in 'thebestpath' variable
+    thebestpath = best_path;
+    thebestpath(thebestpath == 0) = [];
+
+    % Evaluate fitness for the best path
+    [dist, power, delay, fitness] = evaluate([thebestpath, zeros(1, nodes - length(thebestpath))], nodes, powers, coordinates, delays, fitness_type);
+
+    % Append results to a table
+    T = [T; {maxiter, startnode, destination, nbr_parti, strjoin(cellstr(num2str(thebestpath)), '->'), execution_time, dist, power, delay, fitness}];
+
+    % Saving results to an Excel file
+    % Convert cell array to a table with specified variable names
+    T = cell2table(T, 'VariableNames', varNames);
+
+    % Generate a filename based on startnode and destination
+    results_filename = ['pso_results_from_', num2str(startnode), '_to_', num2str(destination), '.xlsx'];
+
+    % Write the table to an Excel file
+    writetable(T, results_filename, 'WriteVariableNames', true);
+
+    % Display a message indicating that results have been saved
+    disp('Results Saved.');
+end
+
+
+% Fitness Evaluation Function
+function [ds, pw, dl, f] = evaluate(posx, nodes, powers, coordinates, delays, fitness_type)
+    % Initialize fitness components
+    ds = 0; % Distance
+    pw = 0; % Power
+    dl = 0; % Delay
+    
+    try
+        % Accumulate distance
+        for i = 1:nodes - 1
+            if posx(i) ~= 0 && posx(i + 1) ~= 0
+                % Extract coordinates of the current and next node
+                pointXY1 = str2double(strsplit(coordinates{posx(i)}, '*'));
+                pointXY2 = str2double(strsplit(coordinates{posx(i + 1)}, '*'));
+
+                % Accumulate Euclidean distance
+                ds = ds + norm(pointXY1 - pointXY2);
+            end
+        end
+
+        % Accumulate power and delay for each node
+        for i = 1:nodes
+            if posx(i) ~= 0
+                % Accumulate power and delay
+                pw = pw + powers(posx(i));
+                dl = dl + delays(posx(i));
+            end
+        end
+
+        % Choose fitness type based on the provided fitness_type parameter
+        if fitness_type == "dist"
+            f = ds;
+        elseif fitness_type == "power"
+            f = pw;
+        elseif fitness_type == "delay"
+            f = dl;
+        else
+          f = ds + pw + dl;
+          
+           
+        end
+    catch exception
+        f = Inf;
+    end
+end
